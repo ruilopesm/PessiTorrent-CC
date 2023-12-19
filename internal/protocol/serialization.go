@@ -48,7 +48,9 @@ func serializeReflectionValue(writer io.Writer, field reflect.Value) error {
 	var err error
 	if field.Type().Kind() == reflect.Struct {
 		err = SerializeStruct(writer, field.Interface())
-	} else if field.Type().Kind() == reflect.Array || field.Type().Kind() == reflect.Slice {
+	} else if field.Type().Kind() == reflect.Array {
+		err = writeFixedSizeArray(writer, field)
+	} else if field.Type().Kind() == reflect.Slice {
 		err = writeArray(writer, field)
 	} else {
 		err = serializeField(writer, field.Interface())
@@ -100,13 +102,26 @@ func deserializeReflectionValue(reader io.Reader, field reflect.Value) error {
 	var err error
 	if field.Kind() == reflect.Struct {
 		err = DeserializeToStruct(reader, field.Addr().Interface())
-	} else if field.Kind() == reflect.Array || field.Kind() == reflect.Slice {
+	} else if field.Kind() == reflect.Array {
+		err = deserializeToFixedSizeArray(reader, field)
+	} else if field.Kind() == reflect.Slice {
 		err = deserializeToArray(reader, field)
 	} else {
 		err = deserializeToField(reader, field.Addr().Interface())
 	}
 	if err != nil {
 		return fmt.Errorf("error deserializing field %v: %w", field.Interface(), err)
+	}
+
+	return nil
+}
+
+func deserializeToFixedSizeArray(reader io.Reader, array reflect.Value) error {
+	for i := 0; i < array.Len(); i++ {
+		err := deserializeReflectionValue(reader, array.Index(i))
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -119,11 +134,7 @@ func deserializeToArray(reader io.Reader, array reflect.Value) error {
 		return err
 	}
 
-	if array.Kind() == reflect.Slice {
-		array.Set(reflect.MakeSlice(array.Type(), int(size), int(size)))
-	} else if array.Kind() == reflect.Array && array.Len() != int(size) {
-		return fmt.Errorf("array size mismatch: %d != %d", array.Len(), size)
-	}
+	array.Set(reflect.MakeSlice(array.Type(), int(size), int(size)))
 
 	for i := uint32(0); i < size; i++ {
 		err := deserializeReflectionValue(reader, array.Index(int(i)))
@@ -189,6 +200,17 @@ func readString(reader io.Reader, str *string) error {
 	}
 
 	*str = string(bytes)
+
+	return nil
+}
+
+func writeFixedSizeArray(writer io.Writer, data reflect.Value) error {
+	for i := 0; i < data.Len(); i++ {
+		err := serializeReflectionValue(writer, data.Index(i))
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
